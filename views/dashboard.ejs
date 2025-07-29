@@ -1,0 +1,100 @@
+<div class="container py-5">
+  <div class="row mb-4">
+    <div class="col-12">
+      <h1 class="text-center fw-bold text-primary display-4 mb-2">Admin Dashboard</h1>
+      <p class="text-center text-muted fs-5">Welcome, Admin! Here’s a quick overview.</p>
+    </div>
+  </div>
+
+  <!-- Summary Stats Cards -->
+<div class="row mb-5 g-4 justify-content-center">
+  <div class="col-md-4">
+    <div class="card border-0 shadow-lg h-100">
+      <div class="card-body text-center">
+        <h5 class="card-title mt-2">Total Pets</h5>
+        <div class="bg-primary bg-gradient rounded-circle d-inline-flex align-items-center justify-content-center mb-3" style="width:70px; height:70px; font-size:2rem;">
+          <span class="text-white fw-bold"><%= stats.totalPets %></span>
+        </div>
+        <div>
+          <i class="bi bi-paw fs-1 text-primary"></i>
+        </div>
+        <a href="/admin/pets" class="btn btn-outline-primary btn-lg mt-3 shadow-sm w-100"><i class="bi bi-paw me-1"></i> Manage Pets</a>
+      </div>
+    </div>
+  </div>
+  <div class="col-md-4">
+    <div class="card border-0 shadow-lg h-100">
+      <div class="card-body text-center">
+        <h5 class="card-title mt-2">Total Users</h5>
+        <div class="bg-success bg-gradient rounded-circle d-inline-flex align-items-center justify-content-center mb-3" style="width:70px; height:70px; font-size:2rem;">
+          <span class="text-white fw-bold"><%= stats.totalUsers %></span>
+        </div>
+        <div>
+          <i class="bi bi-people fs-1 text-success"></i>
+        </div>
+        <a href="/admin/users" class="btn btn-outline-success btn-lg mt-3 shadow-sm w-100"><i class="bi bi-people me-1"></i> Manage Users</a>
+      </div>
+    </div>
+  </div>
+  <div class="col-md-4">
+    <div class="card border-0 shadow-lg h-100">
+      <div class="card-body text-center">
+        <h5 class="card-title mt-2">Total Appointments</h5>
+        <div class="bg-info bg-gradient rounded-circle d-inline-flex align-items-center justify-content-center mb-3" style="width:70px; height:70px; font-size:2rem;">
+          <span class="text-white fw-bold"><%= stats.totalAppointments %></span>
+        </div>
+        <div>
+          <i class="bi bi-calendar-event fs-1 text-info"></i>
+        </div>
+        <a href="/admin/appointments" class="btn btn-outline-info btn-lg mt-3 shadow-sm w-100"><i class="bi bi-calendar-event me-1"></i> Manage Appointments</a>
+      </div>
+    </div>
+  </div>
+</div>
+
+
+
+  <!-- Recent Appointments Table -->
+  <div class="row">
+    <div class="col-12">
+      <div class="card border-0">
+        <div class="card-body">
+          <h3 class="mb-3 text-primary">Recent Appointments</h3>
+          <% if (recentAppointments.length > 0) { %>
+            <div class="table-responsive">
+              <table class="table table-hover align-middle">
+                <thead class="table-primary">
+                  <tr>
+                    <th>ID</th>
+                    <th>Date/Time</th>
+                    <th>User</th>
+                    <th>Pet</th>
+                    <th>Status</th>
+                  </tr>
+                </thead>
+                <tbody>
+                  <% recentAppointments.forEach(appt => { %>
+                    <tr>
+                      <td><%= appt.id %></td>
+                      <td><%= appt.appointment_dt.toLocaleString() %></td>
+                      <td><%= appt.user_name %></td>
+                      <td><%= appt.pet_name %></td>
+                      <td>
+                        <span class="badge 
+                          <%= appt.status === 'Approved' ? 'bg-success' : appt.status === 'Pending' ? 'bg-warning text-dark' : 'bg-secondary' %>">
+                          <%= appt.status %>
+                        </span>
+                      </td>
+                    </tr>
+                  <% }); %>
+                </tbody>
+              </table>
+            </div>
+          <% } else { %>
+            <p class="text-muted">No recent appointments.</p>
+          <% } %>
+        </div>
+      </div>
+    </div>
+  </div>
+</div>

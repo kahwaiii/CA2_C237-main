@@ -1,0 +1,69 @@
+<!-- admin-pets.ejs -->
+<div class="container my-5">
+  <div class="card shadow-lg">
+    <div class="card-header bg-primary text-white d-flex justify-content-between align-items-center">
+      <h1 class="h4 m-0">Manage Pets</h1>
+      <a href="/admin/pets/add" class="btn btn-light">Add New Pet</a>
+    </div>
+    <div class="card-body p-0">
+      <div class="table-responsive">
+        <table class="table table-hover table-striped mb-0">
+          <thead class="table-dark">
+            <tr>
+              <th>ID</th>
+              <th>Name</th>
+              <th>Type</th>
+              <th>Breed</th>
+              <th>Age</th>
+              <th>Image</th>
+              <th>Description</th>
+              <th>Actions</th>
+            </tr>
+          </thead>
+          <tbody>
+            <% if (pets.length === 0) { %>
+              <tr>
+                <td colspan="8" class="text-center py-4 text-muted">No pets available. Add one to get started!</td>
+              </tr>
+            <% } else { %>
+              <% pets.forEach(pet => { %>
+                <tr>
+                  <td><%= pet.id %></td>
+                  <td><%= pet.name %></td>
+                  <td>
+                    <span class="badge bg-<%= pet.type === 'Dog' ? 'primary' : pet.type === 'Cat' ? 'success' : 'warning' %>">
+                      <%= pet.type %>
+                    </span>
+                  </td>
+                  <td><%= pet.breed %></td>
+                  <td><%= pet.age %> years</td>
+                  <td>
+                    <% if (pet.image) { %>
+                      <img src="<%= pet.image %>" alt="<%= pet.name %>" class="img-thumbnail" style="max-width: 100px; max-height: 100px; object-fit: cover;">
+                    <% } else { %>
+                      <span class="text-muted">No image</span>
+                    <% } %>
+                  </td>
+                  <td>
+                    <div style="max-width: 200px; white-space: nowrap; overflow: hidden; text-overflow: ellipsis;" title="<%= pet.description %>">
+                      <%= pet.description || 'No description' %>
+                    </div>
+                  </td>
+                  <td>
+                    <a href="/admin/pets/edit/<%= pet.id %>" class="btn btn-sm btn-warning me-1">Edit</a>
+                    <form action="/admin/pets/delete/<%= pet.id %>" method="POST" style="display: inline;">
+                      <button type="submit" class="btn btn-sm btn-danger" onclick="return confirm('Are you sure you want to delete <%= pet.name %>?');">Delete</button>
+                    </form>
+                  </td>
+                </tr>
+              <% }) %>
+            <% } %>
+          </tbody>
+        </table>
+      </div>
+    </div>
+    <div class="card-footer text-muted text-center">
+      Total Pets: <%= pets.length %>
+    </div>
+  </div>
+</div>

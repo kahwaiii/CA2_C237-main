@@ -1,0 +1,10 @@
+<h1>Add New Pet</h1>
+<% if (error) { %><div class="alert alert-danger"><%= error %></div><% } %>
+<form method="POST" action="/admin/pets/add">
+  <input name="name" placeholder="Name" required>
+  <input name="type" placeholder="Type (e.g., dog)" required>
+  <input name="breed" placeholder="Breed" required>
+  <input name="age" type="number" placeholder="Age" required>
+  <input name="image" placeholder="Image URL (optional)">
+  <button type="submit" class="btn btn-primary">Add Pet</button>
+</form>

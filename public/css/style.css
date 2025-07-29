@@ -1,0 +1,28 @@
+#petCarousel,
+#petCarousel .carousel-inner,
+#petCarousel .carousel-item,
+#petCarousel img {
+  height: 280px;
+  min-height: 180px;
+}
+
+#petCarousel img {
+  object-fit: cover;
+  width: 100%;
+  height: 100%;
+}
+
+/* Optional hero section enhancements */
+.hero-title {
+  color: #1f2937;
+}
+
+.hero-subtext {
+  color: #4b5563;
+}
+
+.btn-outline-light:hover {
+  background-color: #f8f9fa;
+  color: #111;
+  transition: 0.2s ease;
+}

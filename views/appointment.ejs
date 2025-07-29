@@ -1,0 +1,125 @@
+<!-- views/appointment.ejs -->
+<main class="container py-4">
+
+  <% /* ------- Flash messages -------- */ %>
+  <% for (let type in messages) { messages[type].forEach(msg => { %>
+    <div class="alert alert-<%= (type === 'danger' ? 'danger' : type === 'success' ? 'success' : 'info') %> alert-dismissible fade show" role="alert">
+      <%= msg %>
+      <button type="button" class="btn-close" data-bs-dismiss="alert" aria-label="Close"></button>
+    </div>
+  <% }) } %>
+
+  <% if (!pet) { %>
+    <div class="alert alert-warning">Sorry, this pet is not available for appointments.</div>
+    <a href="/pets" class="btn btn-secondary">Back to Pets</a>
+    </main>
+    <% return; %>
+  <% } %>
+
+  <h2 class="mb-3">Book an appointment to meet <%= pet.name %></h2>
+
+  <div class="row mb-4">
+    <div class="col-md-4">
+      <% if (pet.image) { %>
+        <img src="<%= pet.image.startsWith('/') ? pet.image : ('/images/' + pet.image) %>" alt="<%= pet.name %>" class="img-fluid rounded" style="max-height:300px; object-fit:cover;">
+      <% } else { %>
+        <img src="/images/no-image.png" alt="No image" class="img-fluid rounded">
+      <% } %>
+    </div>
+    <div class="col-md-8">
+      <ul class="list-group">
+        <li class="list-group-item"><strong>Type:</strong> <%= pet.type %></li>
+        <li class="list-group-item"><strong>Breed:</strong> <%= pet.breed %></li>
+        <li class="list-group-item"><strong>Age:</strong> <%= pet.age %> year<%= pet.age > 1 ? 's' : '' %></li>
+        <% if (pet.description && pet.description.trim().length > 0) { %>
+          <li class="list-group-item"><strong>Description:</strong> <%= pet.description %></li>
+        <% } %>
+      </ul>
+    </div>
+  </div>
+
+  <form id="bookingForm" method="POST" action="/appointments/schedule/<%= pet.id %>" class="card p-4">
+    <h4 class="mb-3">Choose a date &amp; time</h4>
+
+    <div class="row g-3">
+      <div class="col-md-4">
+        <label for="appointmentDate" class="form-label">Date</label>
+        <input type="date"
+               id="appointmentDate"
+               class="form-control"
+               name="appointmentDate"
+               min="2025-07-29"
+               max="2025-08-31"
+               required>
+      </div>
+
+      <div class="col-md-4">
+        <label for="timeSelect" class="form-label">Time</label>
+        <select id="timeSelect" class="form-select" required disabled>
+          <option value="">Select a time</option>
+        </select>
+      </div>
+    </div>
+
+    <!-- hidden input combines date + time as 'YYYY-MM-DD HH:MM:SS' -->
+    <input type="hidden" name="appointment_dt" id="appointment_dt" />
+
+    <div class="mt-4">
+      <button type="submit" class="btn btn-primary">Book appointment</button>
+      <a href="/pets/<%= pet.id %>" class="btn btn-secondary ms-2">Cancel</a>
+    </div>
+  </form>
+
+</main>
+
+<script>
+  (function() {
+    const dateInput  = document.getElementById('appointmentDate');
+    const timeSelect = document.getElementById('timeSelect');
+    const hidden     = document.getElementById('appointment_dt');
+
+    dateInput.addEventListener('change', async () => {
+      const date = dateInput.value;
+      timeSelect.innerHTML = '<option>Loading available times...</option>';
+      timeSelect.disabled = true;
+
+      if (!date) {
+        timeSelect.innerHTML = '<option value="">Select a time</option>';
+        timeSelect.disabled = true;
+        return;
+      }
+
+      try {
+        const response = await fetch(`/availableSlots?date=${date}&petId=<%= pet.id %>`);
+        if (!response.ok) throw new Error('Network error');
+        const slots = await response.json();
+
+        if (slots.length === 0) {
+          timeSelect.innerHTML = '<option value="">No available slots</option>';
+          timeSelect.disabled = true;
+        } else {
+          timeSelect.innerHTML = '<option value="">Select a time</option>' +
+            slots.map(t => `<option value="${t}">${t.slice(0,5)}</option>`).join('');
+          timeSelect.disabled = false;
+        }
+      } catch (e) {
+        timeSelect.innerHTML = '<option value="">Failed to load slots</option>';
+        timeSelect.disabled = true;
+      }
+    });
+
+    // On form submit, combine date + time into hidden input
+    document.getElementById('bookingForm').addEventListener('submit', e => {
+      const date = dateInput.value;
+      const time = timeSelect.value;
+
+      if (!date || !time) {
+        e.preventDefault();
+        alert('Please select both a date and a time.');
+        return false;
+      }
+
+      hidden.value = `${date} ${time}`;
+    });
+  })();
+</script>

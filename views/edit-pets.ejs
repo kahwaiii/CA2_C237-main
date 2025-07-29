@@ -1,0 +1,17 @@
+<h1>Edit Pet</h1>
+<% if (error) { %><div class="alert alert-danger"><%= error %></div><% } %>
+<form method="POST" action="/admin/pets/edit/<%= pet.id %>">
+  <input name="name" value="<%= pet.name %>" required>
+  
+  <select name="type" required>
+    <% allowedTypes.forEach(function(typeOption) { %>
+      <option value="<%= typeOption %>" <%= pet.type === typeOption ? 'selected' : '' %>><%= typeOption %></option>
+    <% }) %>
+  </select>
+  
+  <input name="breed" value="<%= pet.breed %>" required>
+  <input name="age" type="number" value="<%= pet.age %>" required>
+  <input name="image" value="<%= pet.image %>">
+  <textarea name="description" placeholder="Description"><%= pet.description %></textarea>
+  <button type="submit" class="btn btn-primary">Update Pet</button>
+</form>
