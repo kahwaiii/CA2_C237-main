@@ -12,6 +12,7 @@ const cookieParser   = require('cookie-parser');
 const multer         = require('multer');
 const fs             = require('fs');
 
+
 const app  = express();
 app.use(cookieParser());
 
@@ -69,12 +70,6 @@ const q = (sql, params = []) => pool.query(sql, params).then(([rows]) => rows);
 const needAuth = admin =>
   (req, res, next) => (!req.session.user || (admin && !req.session.user.admin))
     ? res.redirect('/login') : next();
-const slotTaken = (petId, dt) =>
-  q('SELECT id FROM appointments WHERE pet_id=? AND appointment_dt=? AND status<>"cancelled"', [petId, dt])
-  .then(r => r.length);
-const reserved = petId =>
-  q('SELECT 1 FROM appointments WHERE pet_id=? AND status="scheduled" LIMIT 1',
-    [petId]).then(r => r.length);
 
 /* ───── Express basics ───── */
 app.set('view engine', 'ejs');
@@ -89,37 +84,64 @@ app.use(session({
   secret: 'your-secret-key',
   resave: false,
   saveUninitialized: false,
-  cookie: { secure: process.env.NODE_ENV === 'production' }
+  cookie: { 
+    secure: process.env.NODE_ENV === 'production',
+    maxAge: 24 * 60 * 60 * 1000 // 24 hours
+  }
 }));
 app.use(flash());
+
+// Global middleware for locals
 app.use((req, res, next) => {
-  res.locals.user     = req.session.user;
+  res.locals.user = req.session.user || null;
   res.locals.messages = req.flash();
   next();
 });
 
+/* ───── Error handling middleware ───── */
+app.use((err, req, res, next) => {
+  console.error('❌ Unhandled error:', err);
+  if (err.code === 'LIMIT_FILE_SIZE') {
+    req.flash('danger', 'File too large. Maximum size is 5MB.');
+  } else if (err.message === 'Only image files are allowed!') {
+    req.flash('danger', 'Only image files are allowed.');
+  } else {
+    req.flash('danger', 'An unexpected error occurred.');
+  }
+  res.redirect('back');
+});
+
 /* ───── Public pages ───── */
 app.get('/', async (req, res) => {
-  let recentlyViewed = [];
-  if (req.cookies.recentlyViewed) {
-    try {
-      recentlyViewed = JSON.parse(req.cookies.recentlyViewed);
-    } catch (e) {
-      recentlyViewed = [];
+  try {
+    let recentlyViewed = [];
+    if (req.cookies.recentlyViewed) {
+      try {
+        recentlyViewed = JSON.parse(req.cookies.recentlyViewed);
+      } catch (e) {
+        recentlyViewed = [];
+      }
     }
-  }
-  recentlyViewed = recentlyViewed.slice(0, 3);
+    recentlyViewed = recentlyViewed.slice(0, 3);
 
-  let recentlyViewedPets = [];
-  if (recentlyViewed.length > 0) {
-    const pets = await q('SELECT * FROM pets WHERE id IN (?)', [recentlyViewed]);
-    recentlyViewedPets = recentlyViewed.map(id => pets.find(p => p.id == id)).filter(Boolean);
-  }
+    let recentlyViewedPets = [];
+    if (recentlyViewed.length > 0) {
+      const placeholders = recentlyViewed.map(() => '?').join(',');
+      const pets = await q(`SELECT * FROM pets WHERE id IN (${placeholders})`, recentlyViewed);
+      recentlyViewedPets = recentlyViewed.map(id => pets.find(p => p.id == id)).filter(Boolean);
+    }
 
-  res.render('index', {
-    title: 'Home',
-    recentlyViewedPets
-  });
+    res.render('index', {
+      title: 'Home',
+      recentlyViewedPets
+    });
+  } catch (error) {
+    console.error('❌ Error loading home page:', error);
+    res.render('index', {
+      title: 'Home',
+      recentlyViewedPets: []
+    });
+  }
 });
 
 app.get('/pets', async (req, res) => {
@@ -132,29 +154,45 @@ app.get('/pets', async (req, res) => {
   const conditions = [];
 
   if (filter) {
-    conditions.push('type = ?');
     if (filter === 'other') {
-      conditions[conditions.length - 1] = 'type NOT IN (?, ?)';
+      conditions.push('type NOT IN (?, ?)');
       values.push('Dog', 'Cat');
     } else {
+      conditions.push('type = ?');
       values.push(filter.charAt(0).toUpperCase() + filter.slice(1));
     }
   }
-  if (search) {
-    conditions.push('name LIKE ?');
-    values.push('%' + search + '%');
+  
+  if (search && search.trim()) {
+    conditions.push('(name LIKE ? OR breed LIKE ? OR description LIKE ?)');
+    const searchTerm = '%' + search.trim() + '%';
+    values.push(searchTerm, searchTerm, searchTerm);
   }
+  
   if (conditions.length > 0) {
     query += ' WHERE ' + conditions.join(' AND ');
   }
 
-  if (sort === 'oldest') query += ' ORDER BY created_at ASC';
-  else if (sort === 'youngest') query += ' ORDER BY created_at DESC';
-  else if (sort === 'az') query += ' ORDER BY name ASC';
-  else if (sort === 'za') query += ' ORDER BY name DESC';
+  // Add sorting
+  switch (sort) {
+    case 'oldest':
+      query += ' ORDER BY created_at ASC';
+      break;
+    case 'youngest':
+      query += ' ORDER BY created_at DESC';
+      break;
+    case 'az':
+      query += ' ORDER BY name ASC';
+      break;
+    case 'za':
+      query += ' ORDER BY name DESC';
+      break;
+    default:
+      query += ' ORDER BY id DESC';
+  }
 
   try {
-    console.log('QUERY:', query, values);
+    console.log('🔍 QUERY:', query, values);
     const pets = await q(query, values);
     res.render('pets', {
       title: 'Browse Pets',
@@ -165,17 +203,30 @@ app.get('/pets', async (req, res) => {
     });
   } catch (err) {
     console.error('❌ Database error:', err.message);
-    res.status(500).send('Database error occurred');
+    req.flash('danger', 'Error loading pets');
+    res.render('pets', {
+      title: 'Browse Pets',
+      pets: [],
+      filter: filter || null,
+      search: search || '',
+      sort: sort || ''
+    });
   }
 });
 
 app.get('/pets/:id', async (req, res) => {
   try {
     const petId = req.params.id;
+    
+    if (isNaN(petId)) {
+      req.flash('danger', 'Invalid pet ID');
+      return res.redirect('/pets');
+    }
+    
     const rows = await q('SELECT * FROM pets WHERE id=?', [petId]);
     if (!rows.length) {
       req.flash('danger', 'Pet not found');
-      return res.render('petDetails', { title: 'Details', pet: null });
+      return res.redirect('/pets');
     }
 
     // Track recently viewed pets using cookies
@@ -188,12 +239,19 @@ app.get('/pets/:id', async (req, res) => {
       }
     }
     viewed = [petId, ...viewed.filter(id => id !== petId)].slice(0, 3);
-    res.cookie('recentlyViewed', JSON.stringify(viewed), { maxAge: 7 * 24 * 60 * 60 * 1000 });
+    res.cookie('recentlyViewed', JSON.stringify(viewed), { 
+      maxAge: 7 * 24 * 60 * 60 * 1000, // 7 days
+      httpOnly: true 
+    });
 
-    res.render('petDetails', { title: rows[0].name, pet: rows[0] });
+    res.render('petDetails', { 
+      title: rows[0].name, 
+      pet: rows[0] 
+    });
   } catch (err) {
     console.error('❌ Error fetching pet:', err);
-    res.status(500).send('Database error occurred');
+    req.flash('danger', 'Error loading pet details');
+    res.redirect('/pets');
   }
 });
 
@@ -211,6 +269,12 @@ app.route('/register')
     return res.render('register', { title: 'Register', error: 'Password must be at least 6 characters' });
   }
   
+  // Validate email format
+  const emailRegex = /^[^\s@]+@[^\s@]+\.[^\s@]+$/;
+  if (!emailRegex.test(email)) {
+    return res.render('register', { title: 'Register', error: 'Invalid email format' });
+  }
+  
   try {
     await q('INSERT INTO users(name,email,password,phone) VALUES(?,?,?,?)',
             [name, email, await bcrypt.hash(password, 10), phone || null]);
@@ -218,7 +282,11 @@ app.route('/register')
     res.redirect('/login');
   } catch (error) {
     console.error('❌ Registration error:', error);
-    res.render('register', { title: 'Register', error: 'Email already in use' });
+    if (error.code === 'ER_DUP_ENTRY') {
+      res.render('register', { title: 'Register', error: 'Email already in use' });
+    } else {
+      res.render('register', { title: 'Register', error: 'Registration failed. Please try again.' });
+    }
   }
 });
 
@@ -231,7 +299,15 @@ app.route('/login')
   });
 })
 .post(async (req, res) => {
-  const { email, password, rememberMe } = req.body;
+  const { email, password, remember } = req.body;
+  
+  if (!email || !password) {
+    return res.render('login', { 
+      title: 'Login', 
+      error: 'Email and password are required', 
+      rememberedEmail: email || '' 
+    });
+  }
   
   try {
     let rows = await q('SELECT * FROM admins WHERE email=?', [email]);
@@ -271,12 +347,17 @@ app.route('/login')
       admin: userType === 'admin' 
     };
 
-    if (rememberMe) {
-      res.cookie('rememberedEmail', email, { maxAge: 30 * 24 * 60 * 60 * 1000 });
+    if (remember) {
+      res.cookie('rememberedEmail', email, { 
+        maxAge: 30 * 24 * 60 * 60 * 1000, // 30 days
+        httpOnly: true 
+      });
     } else {
       res.clearCookie('rememberedEmail');
     }
 
+    console.log(`✅ User logged in: ${user.name} (${userType})`);
+    
     if (userType === 'admin') {
       res.redirect('/dashboard');
     } else {
@@ -288,18 +369,20 @@ app.route('/login')
     res.render('login', { 
       title: 'Login', 
       error: 'An error occurred during login', 
-      rememberedEmail: email 
+      rememberedEmail: email || '' 
     });
   }
 });
 
 app.get('/logout', (req, res) => {
+  const userName = req.session.user ? req.session.user.name : 'Unknown';
   req.session.destroy((err) => {
     if (err) {
       console.error('❌ Logout error:', err);
       return res.redirect('/');
     }
     
+    console.log(`👋 User logged out: ${userName}`);
     res.clearCookie('connect.sid');
     res.redirect('/');
   });
@@ -307,27 +390,45 @@ app.get('/logout', (req, res) => {
 
 /* ───── Admin dashboard + pets CRUD ───── */
 app.get('/dashboard', needAuth(true), async (req, res) => {
-  const [{ totalPets }]        = await q('SELECT COUNT(*) totalPets FROM pets');
-  const [{ totalUsers }]       = await q('SELECT COUNT(*) totalUsers FROM users');
-  const [{ totalAppointments }] = await q('SELECT COUNT(*) totalAppointments FROM appointments');
-  const recentAppointments = await q(
-    `SELECT a.id, a.appointment_dt, a.status, 
-            u.name as user_name, u.phone as user_phone,
-            p.name as pet_name
-     FROM appointments a
-     LEFT JOIN users u ON a.user_id = u.id
-     LEFT JOIN pets p ON a.pet_id = p.id
-     ORDER BY a.appointment_dt DESC LIMIT 5`);
-  res.render('dashboard', {
-    title: 'Admin Dashboard',
-    stats: { totalPets, totalUsers, totalAppointments },
-    recentAppointments
-  });
+  try {
+    const [{ totalPets }] = await q('SELECT COUNT(*) totalPets FROM pets');
+    const [{ totalUsers }] = await q('SELECT COUNT(*) totalUsers FROM users');
+    const [{ totalAppointments }] = await q('SELECT COUNT(*) totalAppointments FROM appointments');
+    const recentAppointments = await q(
+      `SELECT a.id, a.appointment_dt, a.status, 
+              u.name as user_name, u.phone as user_phone,
+              p.name as pet_name
+       FROM appointments a
+       LEFT JOIN users u ON a.user_id = u.id
+       LEFT JOIN pets p ON a.pet_id = p.id
+       ORDER BY a.appointment_dt DESC LIMIT 5`);
+    
+    res.render('dashboard', {
+      title: 'Admin Dashboard',
+      stats: { totalPets, totalUsers, totalAppointments },
+      recentAppointments
+    });
+  } catch (error) {
+    console.error('❌ Dashboard error:', error);
+    req.flash('danger', 'Error loading dashboard');
+    res.render('dashboard', {
+      title: 'Admin Dashboard',
+      stats: { totalPets: 0, totalUsers: 0, totalAppointments: 0 },
+      recentAppointments: []
+    });
+  }
 });
 
-app.get('/admin/pets', needAuth(true), async (_, res) =>
-  res.render('admin-pets', { title: 'Manage Pets', pets: await q('SELECT * FROM pets') })
-);
+app.get('/admin/pets', needAuth(true), async (req, res) => {
+  try {
+    const pets = await q('SELECT * FROM pets ORDER BY created_at DESC');
+    res.render('admin-pets', { title: 'Manage Pets', pets });
+  } catch (error) {
+    console.error('❌ Error fetching pets:', error);
+    req.flash('danger', 'Error loading pets');
+    res.render('admin-pets', { title: 'Manage Pets', pets: [] });
+  }
+});
 
 app.route('/admin/pets/add')
 .get(needAuth(true), (_, res) =>
@@ -348,6 +449,14 @@ app.route('/admin/pets/add')
     });
   }
   
+  if (isNaN(age) || age < 0 || age > 30) {
+    return res.render('add-pet', { 
+      title: 'Add Pet', 
+      error: 'Age must be a number between 0 and 30.', 
+      allowedTypes: ['Dog', 'Cat', 'Others']
+    });
+  }
+  
   try {
     // Determine the image path
     let finalImagePath = image || null; // Use URL if provided
@@ -357,7 +466,7 @@ app.route('/admin/pets/add')
       finalImagePath = `/images/animals/${req.file.filename}`;
     }
     
-    await q('INSERT INTO pets(name,type,breed,age,image,description) VALUES(?,?,?,?,?,?)',
+    await q('INSERT INTO pets(name,type,breed,age,image,description,created_at) VALUES(?,?,?,?,?,?,NOW())',
             [name, type, breed, age, finalImagePath, description || '']);
     
     req.flash('success', 'Pet added successfully!');
@@ -384,14 +493,23 @@ app.route('/admin/pets/add')
 
 app.route('/admin/pets/edit/:id')
 .get(needAuth(true), async (req, res) => {
-  const rows = await q('SELECT * FROM pets WHERE id=?', [req.params.id]);
-  if (!rows.length) return res.status(404).send('Pet not found');
-  res.render('edit-pets', { 
-    title: 'Edit Pet', 
-    pet: rows[0], 
-    error: null, 
-    allowedTypes: ['Dog', 'Cat', 'Others']
-  });
+  try {
+    const rows = await q('SELECT * FROM pets WHERE id=?', [req.params.id]);
+    if (!rows.length) {
+      req.flash('danger', 'Pet not found');
+      return res.redirect('/admin/pets');
+    }
+    res.render('edit-pets', { 
+      title: 'Edit Pet', 
+      pet: rows[0], 
+      error: null, 
+      allowedTypes: ['Dog', 'Cat', 'Others']
+    });
+  } catch (error) {
+    console.error('❌ Error loading pet for edit:', error);
+    req.flash('danger', 'Error loading pet');
+    res.redirect('/admin/pets');
+  }
 })
 .post(needAuth(true), upload.single('photoFile'), async (req, res) => {
   const { name, type, breed, age, image, description } = req.body;
@@ -402,6 +520,15 @@ app.route('/admin/pets/edit/:id')
       title: 'Edit Pet', 
       pet: { id, name, type, breed, age, image, description },
       error: 'Invalid input. Please check all fields.',
+      allowedTypes: ['Dog', 'Cat', 'Others']
+    });
+  }
+  
+  if (isNaN(age) || age < 0 || age > 30) {
+    return res.render('edit-pets', { 
+      title: 'Edit Pet', 
+      pet: { id, name, type, breed, age, image, description },
+      error: 'Age must be a number between 0 and 30.',
       allowedTypes: ['Dog', 'Cat', 'Others']
     });
   }
@@ -455,6 +582,13 @@ app.post('/admin/pets/delete/:id', needAuth(true), async (req, res) => {
     // Get pet info to delete image file if needed
     const [pet] = await q('SELECT image FROM pets WHERE id=?', [req.params.id]);
     
+    // Check if pet has appointments
+    const appointments = await q('SELECT COUNT(*) as count FROM appointments WHERE pet_id=? AND status!="cancelled"', [req.params.id]);
+    if (appointments[0].count > 0) {
+      req.flash('warning', 'Cannot delete pet with active appointments. Cancel appointments first.');
+      return res.redirect('/admin/pets');
+    }
+    
     if (pet && pet.image && pet.image.startsWith('/images/animals/')) {
       const imagePath = path.join(__dirname, 'public', pet.image);
       if (fs.existsSync(imagePath)) {
@@ -473,159 +607,322 @@ app.post('/admin/pets/delete/:id', needAuth(true), async (req, res) => {
 
 /* ───── User profile ───── */
 app.get('/profile', needAuth(false), async (req, res) => {
-  const userId = req.session.user.id;
-  
-  // Get user data
-  const [user] = await q('SELECT * FROM users WHERE id=?', [userId]);
-  
-  // Get user's appointments
-  const appointments = await q(
-    'SELECT a.*, p.name as pet_name FROM appointments a JOIN pets p ON a.pet_id = p.id WHERE a.user_id = ? ORDER BY a.appointment_dt DESC',
-    [userId]
-  );
-  
-  res.render('profile', {
-    title: 'My Profile',
-    user: user,
-    appointments
-  });
+  try {
+    const userId = req.session.user.id;
+    
+    // Get user data
+    const [user] = await q('SELECT * FROM users WHERE id=?', [userId]);
+    
+    if (!user) {
+      req.flash('danger', 'User not found');
+      return res.redirect('/logout');
+    }
+    
+    // Get user's appointments with pet details
+    const appointments = await q(
+      `SELECT a.id, a.appointment_dt, a.status, a.notes, a.created_at,
+              p.name as pet_name, p.type as pet_type, p.image as pet_image 
+       FROM appointments a 
+       JOIN pets p ON a.pet_id = p.id 
+       WHERE a.user_id = ? 
+       ORDER BY a.appointment_dt DESC`,
+      [userId]
+    );
+    
+    // Format appointment dates for display
+    appointments.forEach(apt => {
+      if (apt.appointment_dt) {
+        const date = new Date(apt.appointment_dt);
+        apt.formatted_date = date.toLocaleDateString('en-US', {
+          weekday: 'long',
+          year: 'numeric',
+          month: 'long',
+          day: 'numeric'
+        });
+        apt.formatted_time = date.toLocaleTimeString('en-US', {
+          hour: 'numeric',
+          minute: '2-digit',
+          hour12: true
+        });
+      }
+    });
+    
+    console.log('👤 Profile loaded for user:', user.name);
+    console.log('📅 Found', appointments.length, 'appointments');
+    
+    res.render('profile', {
+      title: 'My Profile',
+      user: user,
+      appointments
+    });
+  } catch (error) {
+    console.error('❌ Profile error:', error);
+    req.flash('danger', 'Error loading profile');
+    res.redirect('/');
+  }
 });
 
 app.post('/profile/edit', needAuth(false), async (req, res) => {
   const { name, email, phone, password } = req.body;
   const userId = req.session.user.id;
   
+  if (!name || !email) {
+    req.flash('danger', 'Name and email are required');
+    return res.redirect('/profile');
+  }
+  
+  // Validate email format
+  const emailRegex = /^[^\s@]+@[^\s@]+\.[^\s@]+$/;
+  if (!emailRegex.test(email)) {
+    req.flash('danger', 'Invalid email format');
+    return res.redirect('/profile');
+  }
+  
   try {
     if (password && password.trim()) {
+      if (password.length < 6) {
+        req.flash('danger', 'Password must be at least 6 characters');
+        return res.redirect('/profile');
+      }
       // Update with new password
       const hashed = await bcrypt.hash(password, 10);
-      await q('UPDATE users SET name=?, email=?, phone=?, password=? WHERE id=?', [name, email, phone, hashed, userId]);
+      await q('UPDATE users SET name=?, email=?, phone=?, password=? WHERE id=?', 
+              [name, email, phone || null, hashed, userId]);
     } else {
       // Update without changing password
-      await q('UPDATE users SET name=?, email=?, phone=? WHERE id=?', [name, email, phone, userId]);
+      await q('UPDATE users SET name=?, email=?, phone=? WHERE id=?', 
+              [name, email, phone || null, userId]);
     }
+    
     // Update session with new data
     req.session.user.name = name;
     req.session.user.email = email;
     req.flash('success', 'Profile updated successfully!');
   } catch (error) {
     console.error('❌ Profile update error:', error);
-    req.flash('danger', 'Error updating profile');
+    if (error.code === 'ER_DUP_ENTRY') {
+      req.flash('danger', 'Email already in use');
+    } else {
+      req.flash('danger', 'Error updating profile');
+    }
   }
   res.redirect('/profile');
 });
 
 /* ───── Appointment booking ───── */
-app.get('/appointments/schedule/:petId', needAuth(false), async (req, res) => {
+app.route('/appointments/schedule/:petId')
+.get(needAuth(false), async (req, res) => {
   try {
+    console.log('🐾 Appointment route accessed for pet:', req.params.petId);
+    
     const petId = req.params.petId;
     
-    // Validate that petId is a number
+    // Add validation for petId
     if (!petId || isNaN(petId)) {
       console.log('❌ Invalid pet ID:', petId);
       req.flash('danger', 'Invalid pet ID');
       return res.redirect('/pets');
     }
     
-    console.log('🔍 Loading appointment page for pet ID:', petId);
-    
-    // Get pet details
-    const [pet] = await q('SELECT * FROM pets WHERE id = ?', [petId]);
+    const [pet] = await q('SELECT * FROM pets WHERE id=?', [petId]);
     
     if (!pet) {
-      console.log('❌ Pet not found:', petId);
+      console.log('🐾 Pet not found for ID:', petId);
+      req.flash('danger', 'Pet not found');
+      return res.redirect('/pets');
+    }
+
+    // Get all booked slots for this pet in the current booking period
+    const booked = (await q(
+      'SELECT appointment_dt FROM appointments WHERE pet_id=? AND status<>"cancelled" AND appointment_dt BETWEEN ? AND ?',
+      [petId, '2025-07-29', '2025-08-31']
+    )).map(r => r.appointment_dt.toISOString().slice(0,19).replace('T',' '));
+
+    console.log('🐾 Pet found:', pet.name, 'with', booked.length, 'booked slots');
+
+    res.render('appointment', { 
+      title: 'Book Appointment', 
+      pet, 
+      bookedSlots: booked 
+    });
+    
+  } catch (error) {
+    console.error('❌ Appointment booking error:', error);
+    req.flash('danger', 'Error loading appointment page');
+    res.redirect('/pets');
+  }
+})
+.post(needAuth(false), async (req, res) => {
+  try {
+    const petId = req.params.petId;
+    
+    // Ultra-detailed debugging
+    console.log('📋 RAW REQUEST BODY:', JSON.stringify(req.body, null, 2));
+    console.log('📋 REQUEST HEADERS:', req.headers['content-type']);
+    console.log('📋 REQUEST METHOD:', req.method);
+    console.log('📋 REQUEST URL:', req.url);
+    
+    // Check if body parser is working
+    console.log('📋 Is req.body empty?', Object.keys(req.body).length === 0);
+    
+    const { appointmentDate, appointmentTime, notes } = req.body;
+    const userId = req.session.user?.id;
+    
+    console.log('📅 DETAILED EXTRACTION:');
+    console.log('  - req.body.appointmentDate:', req.body.appointmentDate);
+    console.log('  - req.body.appointmentTime:', req.body.appointmentTime);
+    console.log('  - req.body.notes:', req.body.notes);
+    console.log('  - appointmentDate (destructured):', appointmentDate);
+    console.log('  - appointmentTime (destructured):', appointmentTime);
+    console.log('  - userId from session:', userId);
+    
+    // Check for different possible field names
+    console.log('📋 CHECKING ALL POSSIBLE FIELD NAMES:');
+    console.log('  - appointmentDate:', req.body.appointmentDate);
+    console.log('  - appointment_date:', req.body.appointment_date);
+    console.log('  - date:', req.body.date);
+    console.log('  - appointmentTime:', req.body.appointmentTime);
+    console.log('  - appointment_time:', req.body.appointment_time);
+    console.log('  - time:', req.body.time);
+    
+    if (!userId) {
+      console.log('❌ No user in session');
+      req.flash('danger', 'Please log in to book an appointment');
+      return res.redirect('/login');
+    }
+    
+    // Try different field name combinations
+    const finalDate = appointmentDate || req.body.appointment_date || req.body.date;
+    const finalTime = appointmentTime || req.body.appointment_time || req.body.time;
+    
+    console.log('📅 FINAL VALUES TO USE:');
+    console.log('  - finalDate:', finalDate);
+    console.log('  - finalTime:', finalTime);
+    
+    // Validation
+    if (!finalDate || !finalTime || finalDate.trim() === '' || finalTime.trim() === '') {
+      console.log('❌ Validation failed - missing or empty date/time');
+      console.log('  - finalDate empty?', !finalDate || finalDate.trim() === '');
+      console.log('  - finalTime empty?', !finalTime || finalTime.trim() === '');
+      req.flash('danger', 'Please select both date and time');
+      return res.redirect(`/appointments/schedule/${petId}`);
+    }
+    
+    // Validate date is not in the past
+    const today = new Date().toISOString().split('T')[0];
+    if (finalDate < today) {
+      req.flash('danger', 'Cannot book appointments in the past');
+      return res.redirect(`/appointments/schedule/${petId}`);
+    }
+    
+    // Validate petId exists
+    const [pet] = await q('SELECT id, name FROM pets WHERE id = ?', [petId]);
+    if (!pet) {
       req.flash('danger', 'Pet not found');
       return res.redirect('/pets');
     }
     
-    console.log('✅ Pet found:', pet.name);
+    // Combine date and time into proper MySQL datetime format
+    const appointmentDateTime = `${finalDate} ${finalTime}`;
     
-    res.render('appointment', {
-      title: `Book Appointment with ${pet.name}`,
-      pet: pet
-    });
+    console.log('🕐 Combined appointment_dt:', appointmentDateTime);
+    
+    // Validate the datetime format
+    const dateTimeRegex = /^\d{4}-\d{2}-\d{2} \d{2}:\d{2}:\d{2}$/;
+    if (!dateTimeRegex.test(appointmentDateTime)) {
+      console.log('❌ Invalid datetime format:', appointmentDateTime);
+      req.flash('danger', 'Invalid date/time format');
+      return res.redirect(`/appointments/schedule/${petId}`);
+    }
+    
+    // Create the appointment
+    const result = await q(
+      'INSERT INTO appointments (user_id, pet_id, appointment_dt, status, notes, created_at) VALUES (?, ?, ?, ?, ?, NOW())',
+      [userId, petId, appointmentDateTime, 'scheduled', notes || '']
+    );
+    
+    console.log('✅ Appointment created with ID:', result.insertId);
+    console.log('✅ Stored appointment_dt:', appointmentDateTime);
+    
+    // Format time for display
+    const [hours, minutes] = finalTime.split(':');
+    const hour = parseInt(hours);
+    const ampm = hour >= 12 ? 'PM' : 'AM';
+    const hour12 = hour % 12 || 12;
+    const formattedTime = `${hour12}:${minutes.padStart(2, '0')} ${ampm}`;
+    
+    req.flash('success', `Appointment with ${pet.name} booked successfully for ${finalDate} at ${formattedTime}!`);
+    res.redirect('/profile');
     
   } catch (error) {
-    console.error('❌ Error loading appointment page:', error);
-    req.flash('danger', 'Error loading appointment page');
-    res.redirect('/pets');
+    console.error('❌ Error booking appointment:', error);
+    console.error('Error details:', error.message);
+    req.flash('danger', 'Error booking appointment. Please try again.');
+    res.redirect(`/appointments/schedule/${req.params.petId}`);
   }
 });
 
-app.post('/appointments/schedule/:petId', needAuth(false), async (req, res) => {
-  const { appointment_dt } = req.body;
-  const petId  = req.params.petId;
-  const userId = req.session.user.id;
-
-  if (!appointment_dt) {
-    req.flash('danger', 'Select date/time');
-    return res.redirect('back');
-  }
-
-  // Only check if this specific slot is taken
-  if (await slotTaken(petId, appointment_dt)) {
-    req.flash('danger', 'This time slot is already taken');
-    return res.redirect('back');
-  }
-
-  const when = new Date(appointment_dt + '+08:00');
-  if (when < new Date() || when > new Date('2025-08-31T23:59:59+08:00')) {
-    req.flash('danger', 'Date outside booking window');
-    return res.redirect('back');
-  }
-
-  await q(
-    'INSERT INTO appointments (user_id, pet_id, appointment_dt, status) VALUES (?, ?, ?, "scheduled")',
-    [userId, petId, appointment_dt]
-  );
-  req.flash('success', 'Appointment booked!');
-  res.redirect('/profile');
-});
-
+// Available slots API endpoint
 app.get('/availableSlots', needAuth(false), async (req, res) => {
   const { date, petId } = req.query;
-  if (!date || !petId) return res.json([]);
+  
+  console.log('🔍 Slots requested for:', { date, petId });
+  
+  if (!date || !petId) {
+    console.error('❌ Missing date or petId');
+    return res.status(400).json({ error: 'Date and petId are required' });
+  }
   
   try {
-    const booked = (await q(
-      'SELECT appointment_dt FROM appointments WHERE DATE(appointment_dt)=? AND pet_id=? AND status<>"cancelled"',
-      [date, petId]
-    )).map(r => r.appointment_dt.toTimeString().split(' ')[0]);
+    // Return all time slots without filtering (as you requested)
+    console.log('✅ Returning all available slots:', SLOTS);
     
-    // Return available slots (filter out booked ones)
-    const availableSlots = SLOTS.filter(slot => !booked.includes(slot));
-    res.json(availableSlots);
+    res.json(SLOTS);
     
   } catch (error) {
     console.error('❌ Error fetching available slots:', error);
-    res.status(500).json([]);
+    res.status(500).json({ error: 'Internal server error' });
   }
 });
 
 app.post('/appointments/cancel/:id', needAuth(false), async (req, res) => {
-  const appointmentId = req.params.id;
-  const userId = req.session.user.id;
+  try {
+    const appointmentId = req.params.id;
+    const userId = req.session.user.id;
 
-  const [appointment] = await q('SELECT user_id FROM appointments WHERE id = ?', [appointmentId]);
-  if (!appointment || appointment.user_id !== userId) {
-    req.flash('danger', 'Unauthorized or appointment not found');
-    return res.redirect('/profile');
+    const [appointment] = await q('SELECT user_id, appointment_dt FROM appointments WHERE id = ?', [appointmentId]);
+    
+    if (!appointment) {
+      req.flash('danger', 'Appointment not found');
+      return res.redirect('/profile');
+    }
+    
+    if (appointment.user_id !== userId) {
+      req.flash('danger', 'Unauthorized access');
+      return res.redirect('/profile');
+    }
+    
+    // Check if appointment is in the past
+    const now = new Date();
+    const appointmentDate = new Date(appointment.appointment_dt);
+    if (appointmentDate < now) {
+      req.flash('danger', 'Cannot cancel past appointments');
+      return res.redirect('/profile');
+    }
+
+    await q('UPDATE appointments SET status = "cancelled" WHERE id = ?', [appointmentId]);
+    req.flash('success', 'Appointment cancelled successfully');
+  } catch (error) {
+    console.error('❌ Error cancelling appointment:', error);
+    req.flash('danger', 'Error cancelling appointment');
   }
-
-  await q('UPDATE appointments SET status = "cancelled" WHERE id = ?', [appointmentId]);
-  req.flash('success', 'Appointment cancelled successfully');
   res.redirect('/profile');
 });
 
 /* ───── Admin user management ───── */
-// Add these routes after your existing admin routes
-
-/* ───── Admin user management ───── */
-// Replace line around 600 in your app.js - the admin users route
 app.get('/admin/users', needAuth(true), async (req, res) => {
   try {
-    // Remove created_at from the SELECT query since the column doesn't exist
-    const users = await q('SELECT id, name, email, phone FROM users ORDER BY id DESC');
+    const users = await q('SELECT id, name, email, phone, created_at FROM users ORDER BY created_at DESC');
     res.render('admin-users', { 
       title: 'Manage Users', 
       users 
@@ -651,9 +948,16 @@ app.post('/admin/users/add', needAuth(true), async (req, res) => {
     return res.redirect('/admin/users');
   }
   
+  // Validate email format
+  const emailRegex = /^[^\s@]+@[^\s@]+\.[^\s@]+$/;
+  if (!emailRegex.test(email)) {
+    req.flash('danger', 'Invalid email format');
+    return res.redirect('/admin/users');
+  }
+  
   try {
     const hashedPassword = await bcrypt.hash(password, 10);
-    await q('INSERT INTO users (name, email, phone, password) VALUES (?, ?, ?, ?)',
+    await q('INSERT INTO users (name, email, phone, password, created_at) VALUES (?, ?, ?, ?, NOW())',
             [name, email, phone || null, hashedPassword]);
     req.flash('success', 'User added successfully!');
   } catch (error) {
@@ -673,6 +977,13 @@ app.post('/admin/users/edit', needAuth(true), async (req, res) => {
   
   if (!name || !email) {
     req.flash('danger', 'Name and email are required');
+    return res.redirect('/admin/users');
+  }
+  
+  // Validate email format
+  const emailRegex = /^[^\s@]+@[^\s@]+\.[^\s@]+$/;
+  if (!emailRegex.test(email)) {
+    req.flash('danger', 'Invalid email format');
     return res.redirect('/admin/users');
   }
   
@@ -706,10 +1017,10 @@ app.post('/admin/users/delete', needAuth(true), async (req, res) => {
   const { id } = req.body;
   
   try {
-    // Check if user has appointments
-    const appointments = await q('SELECT COUNT(*) as count FROM appointments WHERE user_id = ?', [id]);
+    // Check if user has active appointments
+    const appointments = await q('SELECT COUNT(*) as count FROM appointments WHERE user_id = ? AND status != "cancelled"', [id]);
     if (appointments[0].count > 0) {
-      req.flash('warning', 'Cannot delete user with existing appointments. Cancel appointments first.');
+      req.flash('warning', 'Cannot delete user with active appointments. Cancel appointments first.');
       return res.redirect('/admin/users');
     }
     
@@ -722,11 +1033,11 @@ app.post('/admin/users/delete', needAuth(true), async (req, res) => {
   res.redirect('/admin/users');
 });
 
-/* ───── Admin Appointments Management ───── */
+/* ───── Admin appointment management ───── */
 app.get('/admin/appointments', needAuth(true), async (req, res) => {
   try {
     const appointments = await q(`
-      SELECT a.id, a.appointment_dt, a.status, 
+      SELECT a.id, a.appointment_dt, a.status, a.notes, a.created_at,
              u.name as user_name, u.email as user_email, u.phone as user_phone,
              p.name as pet_name, p.type as pet_type
       FROM appointments a
@@ -797,12 +1108,19 @@ app.route('/admin/appointments/edit/:id')
     return res.redirect(`/admin/appointments/edit/${appointmentId}`);
   }
   
+  if (!['scheduled', 'completed', 'cancelled'].includes(status)) {
+    req.flash('danger', 'Invalid status');
+    return res.redirect(`/admin/appointments/edit/${appointmentId}`);
+  }
+  
   try {
     // Check if the new time slot is available (if changed)
-    const [currentAppointment] = await q('SELECT appointment_dt FROM appointments WHERE id = ?', [appointmentId]);
+    const [currentAppointment] = await q('SELECT appointment_dt, pet_id FROM appointments WHERE id = ?', [appointmentId]);
     
-    if (currentAppointment.appointment_dt.toISOString().slice(0, 19).replace('T', ' ') !== appointment_dt) {
-      // Time slot changed, check if new slot is available
+    const currentDateTime = currentAppointment.appointment_dt.toISOString().slice(0, 19).replace('T', ' ');
+    
+    if (currentDateTime !== appointment_dt || currentAppointment.pet_id != pet_id) {
+      // Time slot or pet changed, check if new slot is available
       const conflictingAppointments = await q(
         'SELECT id FROM appointments WHERE pet_id = ? AND appointment_dt = ? AND status != "cancelled" AND id != ?',
         [pet_id, appointment_dt, appointmentId]
@@ -861,5 +1179,14 @@ app.post('/admin/appointments/status/:id', needAuth(true), async (req, res) => {
   res.redirect('/admin/appointments');
 });
 
+/* ───── 404 handler ───── */
+app.use((req, res) => {
+  res.status(404).render('404', { title: 'Page Not Found' });
+});
+
 /* ───── Boot up ───── */
-app.listen(process.env.PORT || 3000, () => console.log('🐾  PetAdopt server running on 3000'));
+const PORT = process.env.PORT || 3000;
+app.listen(PORT, () => {
+  console.log('🐾  PetAdopt server running on port', PORT);
+  console.log('🌐  Visit: http://localhost:' + PORT);
+});

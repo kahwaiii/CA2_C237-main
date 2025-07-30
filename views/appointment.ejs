@@ -1,4 +1,5 @@
 <main class="appointment-body container py-5">
+<main class="appointment-body container py-5">
 
   <!-- Flash Messages -->
   <% for (let type in messages) { messages[type].forEach(msg => { %>
@@ -47,41 +48,61 @@
      <hr class="my-4" style="border-top: 2px solid #e9ecef; border-radius: 2px;">
 
     <!-- Booking Form -->
-    <form id="bookingForm" method="POST" action="/appointments/schedule/<%= pet.id %>">
-      <h4 class="fw-bold mb-3">Book Your Appointment</h4>
+    <form id="bookingForm" method="POST" action="/appointments/schedule/<%= pet.id %>" enctype="application/x-www-form-urlencoded">
+  <div class="row">
+    <!-- Date Selection -->
+    <div class="col-md-6 mb-4">
+      <label for="appointmentDate" class="form-label fw-semibold">
+        <i class="bi bi-calendar me-1"></i>Select Date <span class="text-danger">*</span>
+      </label>
+      <input type="date" 
+             class="form-control form-control-lg" 
+             id="appointmentDate" 
+             name="appointmentDate" 
+             required 
+             min="<%= new Date().toISOString().split('T')[0] %>"
+             max="2025-08-31">
+      <div class="form-text">Choose a date for your visit</div>
+    </div>
 
-      <div class="row g-3">
-        <div class="col-md-6">
-          <label for="appointmentDate" class="form-label">Date</label>
-          <input type="date"
-                 id="appointmentDate"
-                 class="form-control"
-                 name="appointmentDate"
-                 min="2025-07-29"
-                 max="2025-08-31"
-                 required>
-        </div>
+    <!-- Time Selection -->
+    <div class="col-md-6 mb-4">
+      <label for="appointmentTime" class="form-label fw-semibold">
+        <i class="bi bi-clock me-1"></i>Select Time <span class="text-danger">*</span>
+      </label>
+      <select class="form-select form-select-lg" 
+              id="appointmentTime" 
+              name="appointmentTime" 
+              required 
+              disabled>
+        <option value="">First select a date</option>
+      </select>
+      <div class="form-text" id="timeSlotInfo">Available time slots will appear here</div>
+    </div>
 
-        <div class="col-md-6">
-          <label for="timeSelect" class="form-label">Time</label>
-          <select id="timeSelect" class="form-select" required disabled>
-            <option value="">Select a time</option>
-          </select>
-        </div>
-      </div>
-
-      <input type="hidden" name="appointment_dt" id="appointment_dt" />
-
-      <div class="mt-4">
-        <button type="submit" class="btn btn-success px-4 shadow-sm">
-          Book Appointment
-        </button>
-        <a href="/pets/<%= pet.id %>" class="btn btn-outline-secondary ms-2">
-          Cancel
-        </a>
-      </div>
-    </form>
+    <!-- Notes -->
+    <div class="col-12 mb-4">
+      <label for="notes" class="form-label fw-semibold">
+        <i class="bi bi-chat-text me-1"></i>Additional Notes (Optional)
+      </label>
+      <textarea class="form-control" 
+                id="notes" 
+                name="notes" 
+                rows="3" 
+                placeholder="Any special requests or questions about <%= pet.name %>? (Optional)"></textarea>
+    </div>
   </div>
+
+  <!-- Submit Button -->
+  <div class="d-grid gap-2">
+    <button type="submit" class="btn btn-success btn-lg fw-bold" disabled id="submitBtn">
+      <i class="bi bi-calendar-check me-2"></i>Book Appointment with <%= pet.name %>
+    </button>
+    <a href="/pets/<%= pet.id %>" class="btn btn-outline-secondary">
+      <i class="bi bi-x-circle me-1"></i>Cancel
+    </a>
+  </div>
+</form>
 
 </main>
 
