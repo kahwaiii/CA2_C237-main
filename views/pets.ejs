@@ -8,7 +8,7 @@
         <a href="/pets" class="btn btn-outline-secondary <%= !filter ? 'active' : '' %>">All</a>
         <a href="/pets?type=dog" class="btn btn-outline-secondary <%= filter === 'dog' ? 'active' : '' %>">Dog</a>
         <a href="/pets?type=cat" class="btn btn-outline-secondary <%= filter === 'cat' ? 'active' : '' %>">Cat</a>
-        <a href="/pets?type=rabbit" class="btn btn-outline-secondary <%= filter === 'rabbit' ? 'active' : '' %>">Rabbit</a>
+        <a href="/pets?type=other" class="btn btn-outline-secondary <%= filter === 'other' ? 'active' : '' %>">Other</a>
       </div>
       <div class="mt-2">
         <select class="form-select w-auto" name="sort" onchange="this.form.submit()">
